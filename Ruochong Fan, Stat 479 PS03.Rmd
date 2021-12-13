@@ -1,0 +1,284 @@
+---
+title: "Stat 479 PS03"
+author: "Ruochong Fan"
+date: "Dec 9 2021"
+output:
+  html_document:
+    df_print: paged
+header-includes:
+- \usepackage{fancyhdr}
+- \pagestyle{fancy}
+- \fancyhf{}
+- \rhead{BPP}
+- \lhead{STAT 479 PS03}
+- \cfoot{\thepage}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, comment=NA, tidy=TRUE, tidy.opts=list(width.cutoff=45), warning=FALSE, message=FALSE, fig.align='center')
+library(tidyverse)
+library(dplyr)
+library(plyr)
+library(knitr)
+library(rstan)
+library(imager) # load external images
+```
+
+# 1. 
+
+```{r}
+load("spotify_data.RData")
+spotify_data
+```
+
+What drives song popularity? 
+
+```{r}
+summary(spotify_data[,4:14])
+spotify_data$genre[!duplicated(spotify_data$genre)] # genres
+```
+
+Research question: Does the effect of danceability and valence on popularity vary among different song genres? 
+
+Reason: As we can see, there are in total 6 genres in the given data. The variables popularity, danceability, valence are all continuous numeric values. Such characteristic is suitable to perform linear regression. By comparing the variance between each genre, I can set up a hierarchical model to analyze the data. Since both danceability and valence range [0, 1], there may be no need to standardize the 2 variables. Considering the response variable popularity has range [0, 100], standardization may be performed. Therefore the available data is able to answer the research question. 
+
+# 2. 
+
+For the sake of computation, pick the same number for each group. This can be either randomly drawn or select artists with the same number of songs published. Randomly select $(n = 250)$ songs from the 6 genres: "rap"   "rock"  "pop"   "edm"   "latin" "r&b". Total $6n$ observed data. The goal for the mini project is to study possible variance of popularity under the given predictors between the 6 groups. To fit the hierarchical model, I intend to randomly split the data into 80% train and 20% test, meaning that for each genre there are 200 train rows and 50 test rows (in total 1200 train rows and 300 test rows, which shall be enough). 
+
+## Summary of the subset
+
+Summary: 
+
+```{r}
+set.seed(479)
+list_genre <- rep()
+# genres <- c("rap", "rock", "pop", "edm", "latin", "r&b")
+genres <- spotify_data$genre[!duplicated(spotify_data$genre)]
+for (i in 1:length(genres)) {
+  genre_filter <- spotify_data %>% 
+    filter(genre == genres[i]) 
+  list_genre[[i]] <- sample_n(genre_filter, 250)
+}
+list_genre
+```
+
+Create summaries 
+
+```{r}
+pop_sum <- rep()
+dance_sum <- rep()
+valence_sum <- rep()
+for (i in 1:6) {
+  pop_sum[[i]] <- summary(list_genre[[i]]$popularity)
+  dance_sum[[i]] <- summary(list_genre[[i]]$danceability)
+  valence_sum[[i]] <- summary(list_genre[[i]]$valence)
+}
+```
+
+### Popularity 
+
+```{r fig.height = 6, fig.width = 12, fig.align = "center"}
+pop_sum # numeric summary
+par(mfrow = c(2, 3))
+for (i in 1:6) {
+  hist(list_genre[[i]]$popularity, breaks = 100, xlab = "popularity", main = "Histogram of Popularity for Genres", xlim = c(0, 100), ylim = c(0, 50))
+  abline(v = mean(spotify_data$popularity), col = "red", lwd = 1.5)
+  abline(v = mean(list_genre[[i]]$popularity), col = "orange", lwd = 1.5) # mean
+  abline(v = quantile(list_genre[[i]]$popularity, c(0.025, 0.975))[1], col = "blue", lty = "dashed") # 95% credible interval lower bound
+  abline(v = quantile(list_genre[[i]]$popularity, c(0.025, 0.975))[2], col = "blue", lty = "dashed") # upper bound
+  legend("topleft", legend = c("population mean", "mean", "95% credible interval"), 
+       lty = c(1, 1, 2), lwd = c(1.5, 1.5, 1.5), col = c('red', 'orange', 'blue'))
+}
+```
+
+The average mean for popularity among all songs in the dataset is 43.50. Here we can see that group 1246 (rap, rock, edm, r&b) have mean lower than the population mean. The mean for genre "edm" is 33.19 and is significantly lower than others. The maximum popularity for rock is 79, also significantly lower than other genres. This may show that on the aspect of popularity although rock genre has mean close to the population mean, not many people really like rock (may find it mediocre, fine to listen to but not great). On the other hand, the edm genre has maximum popularity 93 but significantly lower mean. This may show that some people may really like edm songs and others really dislike this genre. Of course, the random sampling of 250 songs per genre is not very large and may cause bias and inaccuracy. The 2.5% quantile is located at 0 may show that all genres have a lot of songs with popularity 0. In fact, 0 popularity is also the mode for all 6 genres of the selected data. 
+
+### Danceability 
+
+```{r fig.height = 6, fig.width = 12, fig.align = "center"}
+dance_sum # numeric summary
+par(mfrow = c(2, 3))
+for (i in 1:6) {
+  hist(list_genre[[i]]$danceability, breaks = 50, xlab = "danceability", main = "Histogram of Danceability for Genres", xlim = c(0, 1), ylim = c(0, 30))
+  abline(v = mean(spotify_data$danceability), col = "red", lwd = 1.5) # population mean
+  abline(v = mean(list_genre[[i]]$danceability), col = "orange", lwd = 1.5) # mean
+  abline(v = quantile(list_genre[[i]]$danceability, c(0.025, 0.975))[1], col = "blue", lty = "dashed") # 95% credible interval lower bound
+  abline(v = quantile(list_genre[[i]]$danceability, c(0.025, 0.975))[2], col = "blue", lty = "dashed") # upper bound
+  legend("topleft", legend = c("population mean", "mean", "95% credible interval"), 
+       lty = c(1, 1, 2), lwd = c(1.5, 1.5, 1.5), col = c('red', 'orange', 'blue'))
+}
+```
+
+The variable danceability is an interesting predictor. Briefly thinking, not all songs are suitable for dancing; attractive dancing videos can also gain a song popularity. While looking at the data summary, danceability has population mean 0.6552. Genres 23 (rock, pop) has mean lower than the population mean, where the mean danceability for genre rock songs is much lower. We can also see that genre rap and latin have generally higher mean danceability. If the predictor danceability has a large and positive effect on the popularity score, than we would expect songs from genre rap and latin to be more popular than songs of other genres. 
+
+### Valence 
+
+```{r fig.height = 6, fig.width = 12, fig.align = "center"}
+valence_sum
+par(mfrow = c(2, 3))
+for (i in 1:6) {
+  hist(list_genre[[i]]$valence, breaks = 50, xlab = "valence", main = "Histogram of Valence for Genres", xlim = c(0, 1), ylim = c(0, 20))
+  abline(v = mean(spotify_data$valence), col = "red", lwd = 1.5) # population mean
+  abline(v = mean(list_genre[[i]]$valence), col = "orange", lwd = 1.5) # mean
+  abline(v = quantile(list_genre[[i]]$valence, c(0.025, 0.975))[1], col = "blue", lty = "dashed") # 95% credible interval lower bound
+  abline(v = quantile(list_genre[[i]]$valence, c(0.025, 0.975))[2], col = "blue", lty = "dashed") # upper bound
+  legend("topleft", legend = c("population mean", "mean", "95% credible interval"), 
+       lty = c(1, 1, 2), lwd = c(1.5, 1.5, 1.5), col = c('red', 'orange', 'blue'))
+}
+```
+
+The population mean for variable valence is 0.5064. We can see that genre edm has mean valence much lower than the population mean and genre latin has mean valence much higher than population mean. Here the valence values of each genre are located around the population mean. This may have shown that valence is not very far-away distributed among different genres (or: do not vary a lot). It remains unclear at this stage whether valence is positive or negatively correlated with popularity. If valence is positive associated with popularity, then genre latin may have a higher popularity score; on the other hand, genre edm may generally have a higher popularity if valence is negatively associated with popularity. 
+
+# 3. 
+
+## Draw a Hierarchical Diagram 
+
+```{r}
+hier_diagram <- load.image("hier_diagram.jpg")
+plot(hier_diagram)
+```
+
+The Hierarchical model has 2 levels. The Spotify data is specified into 1 level of 6 genres. Using the linear regression model, this project aims to analyze the effect of danceability and valence on popularity and how the effect varies between genres. 
+
+## Mathematical Model 
+
+As partially shown in the diagram plot, the model this project uses is linear regression. The linear model can be roughly presented as $y_i|\beta, \sigma \sim N(\beta \times X_{ij}, \sigma^2)$. Since the minimum popularity is 0, the project does not find it necessary to set an $\alpha$ (representing the baseline) for the linear model. The response variable $y$ is a matrix with dim(N, 1) where N is the number of observed data all genres. The matrix X has 2 predictors: danceability and valence with dim(N, 2). The regression coefficient $\beta$ has dim(2, 1). Since the project chooses a hierarchical model with 1 nested structure and 6 groups, $X_{ij}, i \in [1, 6], j \in [1, 2]$ specifies the predictors for each group. Here the index $i$ represents the $i^{th}$ group (genre) while $j=1$ for predictor danceability and $j=2$ for predictor valence. The term $\sigma$ is the standard deviation of the response variable popularity. 
+
+Since both chosen predictors ranges from 0 to 1, the project chooses not to perform standardization. 
+
+## Model Description. 
+
+The data can be generated using the mean and standard deviation. For the response variable y, $\text{std_}y_i = \frac{y_i - \text{mean_}y_i}{\text{sd_}y_i}$ and the same for $X_{ij}$. 
+
+# 4. 
+
+Fitting a prior: Here I do not know a lot about the prior distribution of effect of danceability and valence on popularity, so I decide to set both priors at the same level. Since the two predictors have the same scale (numeric, [0, 1]), setting the same prior seems workable. From the RStan codes, I see three priors that need to be specified. Gamma follows a normal distribution, tau follows a cauchy distribution, and sigma follows a gamma distribution. Here one choice is to use weak informative priors, but this may be counter the Bayesian fashion. Here reference record^[https://mc-stan.org/docs/2_19/stan-users-guide/multivariate-hierarchical-priors-section.html] for some Stan codes and idea for hierarchical structure. 
+
+gamma
+
+tau
+
+sigma represents the standard deviation of the response variable. Since popularity ranges [0, 98] with mean 43.50, I believe that the standard deviation to be relatively large
+
+# 5. 
+
+```{r}
+N <- 1500 # sample size
+J <- 6 # number of genres
+id <- rep(1:J, each = 250) #index of genres
+K <- 2 # number of regression coefficients
+
+gamma <- c(56, 5) # coef of predictors
+tau <- c(0.9, 0.65) # sd of predictors
+sigma <- 23 # sd of response
+beta <- mapply(function(g, t) rnorm(J, g ,t), g = gamma, t = tau) # rnorm generate beta
+```
+
+Create a list: 
+
+```{r}
+# predictor 
+danceability <- rep() 
+valence <- rep()
+for (i in 1:6) {
+  danceability[[i]] <- list_genre[[i]] %>% pull(danceability)
+  valence[[i]] <- list_genre[[i]] %>% pull(valence)
+}
+dance_list <- c(danceability[[1]], danceability[[2]], danceability[[3]], danceability[[4]], danceability[[5]], danceability[[6]])
+valence_list <- c(valence[[1]], valence[[2]], valence[[3]], valence[[4]], valence[[5]], valence[[6]])
+X <- cbind(dance_list, valence_list) # the predictor matrix
+# response 
+popularity <- rep()
+for (i in 1:6) {
+  popularity[[i]] <- list_genre[[i]] %>% pull(popularity)
+}
+y <- c(popularity[[1]], popularity[[2]], popularity[[3]], popularity[[4]], popularity[[5]], popularity[[6]])
+# prediction
+dance_grid <- seq(0, 1, by = 0.01)
+valence_grid <- seq(0, 1, by = 0.01)
+n_grid <- length(dance_grid)
+```
+
+
+
+```{r}
+data_list = list(N = N, 
+                 J = J, 
+                 K = K, 
+                 id = id, 
+                 X = X, 
+                 y = y, 
+                 n_grid = n_grid, 
+                 dance_grid = dance_grid, 
+                 valence_grid = valence_grid)
+hier_stan <- stan_model(file = "hier_lm.stan")
+hier_fit <- sampling(object = hier_stan, data = data_list)
+summary(hier_fit)[[1]][,"Rhat"]
+```
+
+The Rhat values seem to be close to 1 and none exceed 1.1. There is a convergence trend in the model. 
+
+# 6. 
+
+Summarize the findings
+
+```{r}
+post_line <- rstan::extract(hier_fit, pars = "post_line")[["post_line"]]
+beta <- rstan::extract(hier_fit, pars = "beta")[["beta"]]
+mean(beta[,,1])
+mean(beta[,,2])
+```
+
+Perform comparative box plots
+
+```{r fig.height = 6, fig.width = 12, fig.align = "center"}
+# set valance at mean
+idx <- c(1, 251, 501, 751, 1001, 1251, 1500) 
+post_pred_dance <- rep()
+for (i in 1:6) {
+  post_pred_dance[[i]] <- mean(beta[,i,1]) * dance_grid + mean(beta[,i,2]) * mean(X[idx[i]:idx[i+1], 2])
+}
+post_pred_val <- rep()
+for (i in 1:6) {
+  post_pred_val[[i]] <- mean(beta[,i,1]) * mean(X[idx[i]:idx[i+1], 1]) + mean(beta[,i,2]) * valence_grid
+}
+# plots
+par(mfrow = c(1, 2))
+boxplot(post_pred_dance[[1]], post_pred_dance[[2]], post_pred_dance[[3]], 
+        post_pred_dance[[4]], post_pred_dance[[5]], post_pred_dance[[6]])
+boxplot(post_pred_val[[1]], post_pred_val[[2]], post_pred_val[[3]], 
+        post_pred_val[[4]], post_pred_val[[5]], post_pred_val[[6]])
+```
+
+
+Comment on how often the posterior predictive interval contains the actually observed popularity 
+
+We can see in the comparative box plots that the variation of danceability between genres tends to be smaller than that of valence. When valence is fixed at the mean (mean of all 6 genres from the selected data), the mean for each genre's popularity bases on danceability are generally between 20 to 40, where the mean popularity of valence when danceability is fixed at the mean varies a lot between genres. Here genre "EDM" has the lowest posterior predicted value and also the lowest mean; genre "pop" has the highest mean. Here notices that the selected pop songs tend to show a really compact or dense posterior prediction, where the box's size is skewed and all upper bound, mean, lower bound are focused around 45 popularity score. 
+
+Here the model can primarily conclude that there is clear variation of popularity between genres by the effect of danceability and valence. Valence shows an especially significant variance between songs of different genres. Generally speaking, rock songs seem to have a higher popularity based on the two predictors and pop songs seem to have the second highest popularity. 
+
+# 7. 
+
+Comment on model adequacy. From the model, we can see that predictor "danceability" has a much larger effect on popularity than "valence". 
+
+Modifications: adjust for additional predictors, introduce non-linearity, consider more complex hierarchical structure 
+
+# Additional Considerations
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
